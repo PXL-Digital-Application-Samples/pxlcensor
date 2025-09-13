@@ -13,6 +13,138 @@ Five containerized services with clear separation of concerns:
 4. **Frontend** - Vue 3 SPA
 5. **PostgreSQL** - Database and job queue
 
+## System Architecture Diagram
+
+```mermaid
+graph TB
+    %% User and Browser
+    User[👤 User] --> Browser[🌐 Browser]
+    
+    %% Frontend Service
+    Browser --> Frontend[📱 Frontend Service<br/>Vue 3 SPA<br/>Port 8080]
+    
+    %% API Service
+    Frontend -->|REST API Calls| API[🔧 API Service<br/>Node.js/Fastify<br/>Port 3000]
+    API -->|Serves Static Files| Frontend
+    
+    %% Database
+    API -->|SQL Queries<br/>Job Management| DB[(🗄️ PostgreSQL<br/>Port 5432<br/>• Images metadata<br/>• Jobs queue<br/>• Events audit)]
+    
+    %% Media Service
+    API -->|Generate Signed URLs| Media[📁 Media Service<br/>Node.js<br/>Port 8081]
+    Frontend -->|Upload/Download Files<br/>via Signed URLs| Media
+    
+    %% Processor Service
+    Processor[⚙️ Processor Service<br/>Node.js Worker<br/>• Python deface CLI<br/>• Automatic scaling] -->|LISTEN/NOTIFY<br/>Claim Jobs| DB
+    Processor -->|Download/Upload Files<br/>via Signed URLs| Media
+    
+    %% File System
+    Media -->|Read/Write Files| FS[💾 File System<br/>media-data/<br/>• originals/<br/>• processed/]
+    
+    %% External Processing
+    Processor -->|Execute Commands| Deface[🐍 Python deface<br/>Face Detection<br/>Anonymization]
+    
+    %% Data Flow Annotations
+    API -.->|NOTIFY jobs_channel| DB
+    DB -.->|Job Notifications| Processor
+    
+    %% Styling
+    classDef service fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef database fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef storage fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef external fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    
+    class Frontend,API,Media,Processor service
+    class DB database
+    class FS storage
+    class User,Browser,Deface external
+```
+
+## Data Flow Sequences
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant A as API
+    participant M as Media
+    participant D as Database
+    participant P as Processor
+    participant DF as Deface CLI
+    
+    %% Upload Flow
+    Note over U,DF: Image Upload & Processing Flow
+    
+    U->>F: Upload image + options
+    F->>A: POST /upload-init
+    A->>M: Generate signed PUT URL
+    M-->>A: Signed URL + headers
+    A->>D: Insert image metadata
+    A->>D: Insert job with options
+    A->>D: NOTIFY jobs_channel
+    A-->>F: Upload URL + image ID
+    
+    F->>M: PUT image file (signed)
+    M->>M: Save to originals/
+    M-->>F: Upload complete
+    
+    %% Processing Flow
+    Note over P,DF: Background Processing
+    
+    D-->>P: LISTEN notification
+    P->>D: claim_jobs(worker_id)
+    D-->>P: Job details + options
+    
+    P->>A: Request signed download URL
+    A->>M: Generate signed GET URL
+    M-->>A: Signed URL
+    A-->>P: Download URL
+    
+    P->>M: GET original image
+    M-->>P: Image file
+    
+    P->>P: Determine optimal scale<br/>(based on file size)
+    P->>DF: Execute deface command<br/>(method, size, scale)
+    DF-->>P: Processed image
+    
+    P->>A: Request signed upload URL
+    A->>M: Generate signed PUT URL
+    M-->>A: Signed URL
+    A-->>P: Upload URL
+    
+    P->>M: PUT processed image
+    M->>M: Save to processed/
+    M-->>P: Upload complete
+    
+    P->>D: complete_job(job_id, path)
+    D->>D: Update job & image status
+    
+    %% Gallery View
+    Note over U,M: Gallery & Download Flow
+    
+    U->>F: View gallery
+    F->>A: GET /images
+    A->>D: Query images with pagination
+    D-->>A: Image list + metadata
+    A->>M: Generate signed URLs
+    M-->>A: Signed URLs for processed
+    A-->>F: Images with signed URLs
+    F->>M: Load processed images
+    M-->>F: Image files
+    
+    %% Delete Flow
+    Note over U,M: Delete Flow
+    
+    U->>F: Delete image
+    F->>A: DELETE /images/:id
+    A->>D: BEGIN transaction
+    A->>M: DELETE original file
+    A->>M: DELETE processed file
+    A->>D: DELETE from database
+    A->>D: COMMIT transaction
+    A-->>F: Delete complete
+```
+
 ## Component Details
 
 ### 1. API Service (Node.js/Fastify)
