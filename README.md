@@ -29,6 +29,8 @@ PXLCensor provides an easy-to-use interface for anonymizing faces in photos. Upl
 5. Anonymization filters are applied to detected face regions
 6. Download the processed image or view it in the gallery
 
+For detailed technical information, see the [Technical Specification](TECH_SPEC.md).
+
 <img src="assets/upload.png" alt="Upload Interface" width="600">
 
 ## Architecture
