@@ -2,7 +2,7 @@
 
 A web-based face anonymization service that automatically detects and blurs, pixelates, or blocks faces in uploaded images.
 
-![alt text](assets/image_detail.png)
+<img src="assets/image_detail.png" alt="Image Detail View" width="600">
 
 ## Overview
 
@@ -18,7 +18,7 @@ PXLCensor provides an easy-to-use interface for anonymizing faces in photos. Upl
 - Complete file management including deletion
 - Docker-based deployment
 
-![alt text](assets/gallery.png)
+<img src="assets/gallery.png" alt="Gallery View" width="600">
 
 ## How It Works
 
@@ -29,7 +29,7 @@ PXLCensor provides an easy-to-use interface for anonymizing faces in photos. Upl
 5. Anonymization filters are applied to detected face regions
 6. Download the processed image or view it in the gallery
 
-![alt text](assets/upload.png)
+<img src="assets/upload.png" alt="Upload Interface" width="600">
 
 ## Architecture
 
@@ -41,7 +41,7 @@ The application consists of five services:
 - **Media**: File storage service with signed URLs
 - **Database**: PostgreSQL with job queue
 
-![alt text](assets/queue.png)
+<img src="assets/queue.png" alt="Processing Queue" width="600">
 
 ## Services
 
