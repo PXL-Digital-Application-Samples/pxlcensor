@@ -89,7 +89,6 @@ async function runDeface(inputPath, outputPath, options = {}) {
   return new Promise((resolve, reject) => {
     const args = [
       inputPath,
-      '--boxes',
       '-o', outputPath
     ];
     
@@ -182,11 +181,15 @@ async function processJob(job) {
       
       // Get processing options from job or image
       const processingOptions = job.processing_options || image.processing_options || {};
+      console.log('Raw processing options:', JSON.stringify(processingOptions));
+      
       const defaceOptions = {
         method: processingOptions.method || 'mosaic',
         scale_720p: processingOptions.scale_720p || false,
         mosaic_size: processingOptions.mosaic_size || 20
       };
+      
+      console.log('Deface options:', JSON.stringify(defaceOptions));
       
       // Apply 720p scaling if requested
       if (defaceOptions.scale_720p) {

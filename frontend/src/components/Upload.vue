@@ -30,6 +30,18 @@
       </div>
     </div>
 
+    <!-- UNIFIED STATUS BOX - ONE BOX FOR EVERYTHING -->
+    <div v-if="status" class="unified-status" :class="status">
+      <div class="status-content">
+        <div class="status-message">{{ statusMessage }}</div>
+        <div v-if="progress && status !== 'success' && status !== 'error'" class="progress-container">
+          <div class="progress-bar" :style="{ width: progress + '%' }"></div>
+          <span class="progress-text">{{ progressText }}</span>
+        </div>
+        <div v-if="error && status === 'error'" class="error-message">{{ error }}</div>
+      </div>
+    </div>
+
     <div v-if="file" class="processing-options">
       <h3>Processing Options</h3>
       
@@ -73,15 +85,6 @@
         {{ uploading ? 'Uploading...' : 'Upload & Process' }}
       </button>
     </div>
-
-    <div v-if="progress" class="progress">
-      <div class="progress-bar" :style="{ width: progress + '%' }"></div>
-      <span>{{ progressText }}</span>
-    </div>
-
-    <div v-if="error" class="error">
-      {{ error }}
-    </div>
   </div>
 </template>
 
@@ -98,14 +101,27 @@ const uploading = ref(false)
 const progress = ref(0)
 const progressText = ref('')
 const error = ref(null)
+const status = ref(null)
+const statusMessage = ref('')
 const fileInput = ref(null)
 
-// Processing options with defaults
+// Processing options with defaults - BULLETPROOF INITIALIZATION
 const processingOptions = ref({
   method: 'mosaic',
   mosaic_size: 20,
   scale_720p: false
 })
+
+// Ensure processingOptions is always properly initialized
+const ensureProcessingOptions = () => {
+  if (!processingOptions.value || typeof processingOptions.value !== 'object') {
+    processingOptions.value = {
+      method: 'mosaic',
+      mosaic_size: 20,
+      scale_720p: false
+    }
+  }
+}
 
 // Calculate smart mosaic size based on image dimensions and file size
 const calculateSmartMosaicSize = async (file) => {
@@ -182,6 +198,9 @@ const selectFile = async (selectedFile) => {
   
   // Calculate smart mosaic size based on actual image dimensions
   const smartMosaicSize = await calculateSmartMosaicSize(selectedFile)
+  
+  // BULLETPROOF: Ensure processing options exist before setting
+  ensureProcessingOptions()
   processingOptions.value.mosaic_size = smartMosaicSize
   
   // Create preview
@@ -200,21 +219,25 @@ const calculateSHA256 = async (file) => {
 }
 
 const upload = async () => {
-  if (!file.value) return
+  if (!file.value) {
+    setStatus('error', 'No file selected')
+    return
+  }
+  
+  // BULLETPROOF: Ensure processing options exist
+  ensureProcessingOptions()
   
   uploading.value = true
-  error.value = null
+  setStatus('uploading', 'Starting upload...')
   progress.value = 0
   
   try {
     // Step 1: Calculate SHA256
-    progressText.value = 'Calculating file hash...'
-    progress.value = 10
+    setStatus('uploading', 'Calculating file hash...', 10)
     const sha256 = await calculateSHA256(file.value)
     
     // Step 2: Initialize upload
-    progressText.value = 'Initializing upload...'
-    progress.value = 20
+    setStatus('uploading', 'Initializing upload...', 20)
     const initResponse = await axios.post('/api/upload-init', {
       filename: file.value.name,
       mime: file.value.type,
@@ -227,23 +250,19 @@ const upload = async () => {
     
     if (duplicate) {
       if (status === 'complete' && processed_path) {
-        // Image already processed, show success
-        progressText.value = 'Image already processed!'
-        progress.value = 100
+        // Image already processed
+        setStatus('success', 'Image already processed!', 100)
         setTimeout(() => {
-          emit('uploaded')
           reset()
         }, 2000)
         return
       } else {
         // Image exists but not yet processed
-        progressText.value = 'Image already exists, processing...'
-        progress.value = 50
+        setStatus('uploading', 'Image already exists, processing...', 50)
       }
     } else {
       // Step 3: Upload file
-      progressText.value = 'Uploading image...'
-      progress.value = 30
+      setStatus('uploading', 'Uploading image...', 30)
       
       await axios.put(upload_url, file.value, {
         headers: {
@@ -252,50 +271,75 @@ const upload = async () => {
         },
         onUploadProgress: (e) => {
           if (e.lengthComputable) {
-            progress.value = 30 + (e.loaded / e.total) * 40
+            const uploadProgress = 30 + (e.loaded / e.total) * 40
+            setStatus('uploading', 'Uploading image...', uploadProgress)
           }
         }
       })
     }
     
     // Step 4: Trigger processing
-    progressText.value = 'Starting face anonymization...'
-    progress.value = 80
+    setStatus('uploading', 'Starting face anonymization...', 80)
     
+    console.log('About to trigger processing for image:', image_id)
     const processResponse = await axios.post(`/api/images/${image_id}/process`, {
       pipeline: 'deface_boxes'
     })
+    console.log('Processing triggered successfully:', processResponse.data)
     
-    // Step 5: Complete
-    progress.value = 100
-    progressText.value = 'Upload complete! Processing in background...'
+    // Step 5: Complete - SUCCESSFUL UPLOAD!
+    setStatus('success', 'Succeeded!', 100)
     
-    // Just reset without redirecting
+    // Show success for 3 seconds, then reset
     setTimeout(() => {
-      uploading.value = false
-      progress.value = 0
-      progressText.value = ''
-      // Don't emit 'uploaded' to avoid automatic redirect
-      // User can manually go to gallery when they want
+      reset()
     }, 3000)
     
   } catch (err) {
-    // Reset progress and uploading state
-    uploading.value = false
-    progress.value = 0
-    progressText.value = ''
+    console.error('Upload failed:', err)
+    console.error('Error response:', err.response)
     
-    // Handle specific error cases
+    // Handle specific error cases with appropriate messages
+    let errorMessage = 'Upload failed'
+    let errorDetails = null
+    
     if (err.response?.status === 409) {
-      error.value = 'This image has already been processed. Try a different image or modify this one slightly to reprocess with new settings.'
+      errorMessage = 'Already Processed'
     } else if (err.response?.data?.message) {
-      error.value = err.response.data.message
+      errorMessage = 'Upload Failed'
+      errorDetails = err.response.data.message
     } else if (err.response?.data?.error) {
-      error.value = err.response.data.error
+      errorMessage = 'Upload Failed'
+      errorDetails = err.response.data.error
     } else {
-      error.value = err.message || 'Upload failed'
+      errorMessage = 'Upload Failed'
+      errorDetails = err.message || 'Unknown error'
     }
+    
+    setStatus('error', errorMessage, 100, errorDetails)
+    
+    // Show error for 3 seconds, then reset
+    setTimeout(() => {
+      reset()
+    }, 3000)
   }
+  
+  uploading.value = false
+}
+
+// Helper function to set unified status
+const setStatus = (type, message, progressValue = null, errorDetails = null) => {
+  status.value = type
+  statusMessage.value = message
+  if (progressValue !== null) {
+    progress.value = progressValue
+  }
+  if (type === 'uploading' && progressValue) {
+    progressText.value = `${Math.round(progressValue)}%`
+  } else {
+    progressText.value = ''
+  }
+  error.value = errorDetails
 }
 
 const reset = () => {
@@ -305,6 +349,8 @@ const reset = () => {
   progress.value = 0
   progressText.value = ''
   error.value = null
+  status.value = null
+  statusMessage.value = ''
   
   // Reset processing options to defaults
   processingOptions.value = {
@@ -454,12 +500,93 @@ const formatBytes = (bytes) => {
   font-weight: 500;
 }
 
+.progress-bar.success {
+  background: linear-gradient(90deg, #4caf50, #66bb6a);
+}
+
+.progress-bar.error {
+  background: linear-gradient(90deg, #f44336, #ef5350);
+}
+
 .error {
   margin-top: 1rem;
   padding: 1rem;
   background: #ffebee;
   color: #c62828;
   border-radius: 4px;
+}
+
+/* UNIFIED STATUS BOX - ONE BOX FOR ALL STATUS */
+.unified-status {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  min-width: 400px;
+  max-width: 500px;
+  padding: 1.5rem;
+  border-radius: 12px;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+  backdrop-filter: blur(10px);
+}
+
+.unified-status.uploading {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+  color: #495057;
+  border: 2px solid #6c757d;
+}
+
+.unified-status.success {
+  background: linear-gradient(135deg, #d4edda, #c3e6cb);
+  color: #155724;
+  border: 2px solid #28a745;
+}
+
+.unified-status.error {
+  background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+  color: #721c24;
+  border: 2px solid #dc3545;
+}
+
+.status-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.status-message {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.progress-bar {
+  background: #28a745;
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.error-message {
+  background: rgba(255,255,255,0.7);
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: #721c24;
+  border: 1px solid rgba(220,53,69,0.3);
 }
 
 .hint {
