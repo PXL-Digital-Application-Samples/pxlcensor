@@ -32,9 +32,9 @@ Five containerized services with clear separation of concerns:
 **Endpoints:**
 ```
 POST /upload-init     - Initialize upload, return signed PUT URL
-POST /images/:id/process - Queue anonymization job
-GET  /images         - List images with filters
-GET  /images/:id     - Get image details
+GET  /images         - List images with filters and pagination
+GET  /images/:id     - Get image details with signed URLs
+DELETE /images/:id   - Delete image and all associated files
 GET  /jobs/:id       - Get job status
 GET  /queue          - Queue statistics
 GET  /health         - Health check endpoint
@@ -70,18 +70,23 @@ GET  /metrics        - Prometheus metrics
 - Job retry logic with exponential backoff
 
 **deface Integration:**
-- Installation: `pip install deface` in Dockerfile
-- Command: `deface INPUT --boxes --replacewith solid -o OUTPUT`
-- Optional scaling: `--scale 1280x720` for large images
+- Installation: `pip install deface` in Python virtual environment
+- Command variations: 
+  - Mosaic: `deface INPUT --replacewith mosaic --mosaicsize SIZE --scale WxH -o OUTPUT`
+  - Blur: `deface INPUT --replacewith blur --scale WxH -o OUTPUT`
+  - Solid: `deface INPUT --replacewith solid --scale WxH -o OUTPUT`
+- Automatic scaling based on file size for optimal performance
 - Supported formats: jpg, jpeg, png, webp
 
 **Processing Flow:**
+
 1. LISTEN on `jobs_channel`
-2. Claim jobs with SELECT FOR UPDATE SKIP LOCKED
+2. Claim jobs with atomic `claim_jobs()` function using SELECT FOR UPDATE SKIP LOCKED
 3. Download original via signed URL
-4. Execute deface command
-5. Upload processed image
-6. Update job status and events
+4. Determine optimal scale based on file size (1920x1080, 1600x900, or 1280x720)
+5. Execute deface command with processing options (method, mosaic_size)
+6. Upload processed image
+7. Update job status using `complete_job()` or `fail_job()` functions
 
 ### 4. Frontend (Vue 3 + Vite)
 
@@ -102,13 +107,14 @@ GET  /metrics        - Prometheus metrics
 ```sql
 -- Images table
 CREATE TABLE images (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   original_path TEXT NOT NULL,
   processed_path TEXT,
   sha256 CHAR(64) NOT NULL,
-  mime TEXT NOT NULL,
-  bytes INTEGER NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('uploaded', 'queued', 'processing', 'done', 'failed')),
+  mime TEXT NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
+  bytes INTEGER NOT NULL CHECK (bytes > 0),
+  status TEXT NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploaded', 'queued', 'processing', 'done', 'failed')),
+  processing_options JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -116,57 +122,72 @@ CREATE TABLE images (
 -- Jobs queue table  
 CREATE TABLE jobs (
   id BIGSERIAL PRIMARY KEY,
-  image_id UUID REFERENCES images(id),
+  image_id UUID NOT NULL REFERENCES images(id) ON DELETE CASCADE,
   kind TEXT NOT NULL DEFAULT 'deface_boxes',
-  status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'done', 'failed')),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'done', 'failed')),
   run_at TIMESTAMPTZ DEFAULT NOW(),
   attempts INTEGER DEFAULT 0,
   claimed_by TEXT,
   claimed_at TIMESTAMPTZ,
   dedupe_key TEXT UNIQUE,
-  error_log TEXT
+  error_log TEXT,
+  processing_options JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Events audit table
 CREATE TABLE events (
   id BIGSERIAL PRIMARY KEY,
-  image_id UUID REFERENCES images(id),
+  image_id UUID NOT NULL REFERENCES images(id) ON DELETE CASCADE,
   at TIMESTAMPTZ DEFAULT NOW(),
   type TEXT NOT NULL,
-  data JSONB
+  data JSONB DEFAULT '{}'
 );
 
 -- Indexes
 CREATE INDEX idx_jobs_queue ON jobs(status, run_at) WHERE status = 'queued';
+CREATE INDEX idx_jobs_processing ON jobs(status, claimed_at) WHERE status = 'processing';
 CREATE INDEX idx_images_status ON images(status);
-CREATE UNIQUE INDEX idx_jobs_dedupe ON jobs(dedupe_key);
+CREATE INDEX idx_images_sha256 ON images(sha256);
+CREATE INDEX idx_events_image_id ON events(image_id);
+CREATE INDEX idx_events_at ON events(at DESC);
+
+-- Database functions for atomic operations
+CREATE OR REPLACE FUNCTION claim_jobs(worker_id TEXT, batch_size INTEGER DEFAULT 1) 
+RETURNS TABLE (id BIGINT, image_id UUID, kind TEXT, attempts INTEGER);
+
+CREATE OR REPLACE FUNCTION complete_job(job_id BIGINT, p_processed_path TEXT DEFAULT NULL) 
+RETURNS BOOLEAN;
+
+CREATE OR REPLACE FUNCTION fail_job(job_id BIGINT, error_message TEXT) 
+RETURNS BOOLEAN;
 ```
 
 ## Queue Implementation (PostgreSQL LISTEN/NOTIFY)
 
 **Enqueue Process:**
+
 ```javascript
-// API service
+// API service - upload-init endpoint creates job automatically
 await client.query(`
-  INSERT INTO jobs (image_id, dedupe_key, status)
-  VALUES ($1, $2, 'queued')
-`, [imageId, dedupeKey]);
+  INSERT INTO jobs (image_id, kind, processing_options, dedupe_key, status)
+  VALUES ($1, $2, $3, $4, 'queued')
+`, [imageId, 'deface_boxes', processingOptions, dedupeKey]);
 await client.query("NOTIFY jobs_channel");
 ```
 
 **Worker Process:**
+
 ```javascript
-// Processor service
+// Processor service - uses atomic claim_jobs function
 await client.query('LISTEN jobs_channel');
 client.on('notification', async () => {
-  const job = await client.query(`
-    SELECT * FROM jobs 
-    WHERE status = 'queued' AND run_at <= NOW()
-    ORDER BY run_at
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-  `);
-  // Process job...
+  const result = await client.query('SELECT * FROM claim_jobs($1, $2)', [workerId, 1]);
+  if (result.rows.length > 0) {
+    const job = result.rows[0];
+    // Process job with automatic scaling and processing options...
+  }
 });
 ```
 
@@ -313,7 +334,22 @@ PROCESSOR_CONCURRENCY=1
 
 # Development
 NODE_ENV=development
+LOG_LEVEL=info
 ```
+
+## Processing Options
+
+**Supported Methods:**
+- `mosaic`: Pixelated blocks with configurable size (1-120 pixels)
+- `blur`: Gaussian blur filter
+- `solid`: Solid black rectangles
+
+**Automatic Scaling:**
+- Small files (<2MB): 1920x1080 inference resolution
+- Medium files (2-10MB): 1600x900 inference resolution  
+- Large files (>10MB): 1280x720 inference resolution
+
+Processing options are stored as JSONB in both images and jobs tables, allowing flexible configuration without schema changes.
 
 ## Performance Optimizations
 
