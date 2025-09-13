@@ -260,15 +260,17 @@ app.get('/images/:id', async (request) => {
   
   // Generate signed URL for original if needed
   let originalUrl = null;
+  let originalHeaders = null;
   if (image.original_path) {
     const signed = await getSignedUrl('GET', `/${image.original_path}`, 60);
     originalUrl = `${config.mediaServiceUrl}${signed.url}`;
+    originalHeaders = signed.headers;
   }
-  
+
   return {
     ...image,
     original_url: originalUrl,
-    original_headers: originalUrl ? signed.headers : null,
+    original_headers: originalHeaders,
     processed_url: image.processed_path ? 
       `${config.mediaServiceUrl}/processed/${image.processed_path.replace('processed/', '')}` : null,
     events: events.rows
