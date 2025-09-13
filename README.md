@@ -1,4 +1,4 @@
-# PXLCensor
+# pxlcensor
 
 A web-based face anonymization service that automatically detects and blurs, pixelates, or blocks faces in uploaded images.
 
