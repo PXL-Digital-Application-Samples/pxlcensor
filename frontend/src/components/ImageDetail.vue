@@ -17,7 +17,7 @@
                 v-if="originalUrl && !originalError" 
                 :src="originalUrl"
                 alt="Original"
-                @error="originalError = true"
+                @error="onOriginalError"
                 @load="onOriginalLoad"
                 ref="originalImg"
               />
@@ -26,9 +26,6 @@
                 <span v-else-if="!originalUrl">📁 Original not available</span>
                 <span v-else>📸 Loading original...</span>
               </div>
-            </div>
-            <div v-if="originalDimensions" class="image-info">
-              {{ originalDimensions }}
             </div>
           </div>
           
@@ -49,9 +46,6 @@
                 <span v-else>⏳ Not processed yet</span>
               </div>
             </div>
-            <div v-if="processedDimensions" class="image-info">
-              {{ processedDimensions }}
-            </div>
           </div>
         </div>
         
@@ -71,6 +65,14 @@
             <div class="detail-item">
               <span class="label">File Size:</span>
               <span>{{ formatBytes(image.bytes) }}</span>
+            </div>
+            <div v-if="originalDimensions" class="detail-item">
+              <span class="label">Original Resolution:</span>
+              <span>{{ originalDimensions }}</span>
+            </div>
+            <div v-if="processedDimensions" class="detail-item">
+              <span class="label">Processed Resolution:</span>
+              <span>{{ processedDimensions }}</span>
             </div>
             <div class="detail-item">
               <span class="label">SHA256:</span>
@@ -113,7 +115,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 
 const props = defineProps({
@@ -130,6 +132,7 @@ const originalDimensions = ref('')
 const processedDimensions = ref('')
 const originalImg = ref(null)
 const processedImg = ref(null)
+const blobUrls = ref([]) // Track blob URLs for cleanup
 
 const loadImage = async () => {
   if (!props.imageId) return
@@ -139,12 +142,42 @@ const loadImage = async () => {
     originalError.value = false
     originalDimensions.value = ''
     processedDimensions.value = ''
+    originalUrl.value = ''
     
     const response = await axios.get(`/api/images/${props.imageId}`)
     image.value = response.data
     
+    console.log('Image details response:', response.data)
+    
     if (response.data.original_url) {
-      originalUrl.value = response.data.original_url
+      // For images with signed URLs that require headers, we need to fetch and convert to blob URL
+      if (response.data.original_headers) {
+        try {
+          console.log('Fetching original image with headers:', response.data.original_headers)
+          const imageResponse = await fetch(response.data.original_url, {
+            headers: response.data.original_headers
+          })
+          
+          if (imageResponse.ok) {
+            const blob = await imageResponse.blob()
+            const blobUrl = URL.createObjectURL(blob)
+            blobUrls.value.push(blobUrl) // Track for cleanup
+            originalUrl.value = blobUrl
+            console.log('Original image converted to blob URL:', originalUrl.value)
+          } else {
+            console.error('Failed to fetch original image:', imageResponse.status, imageResponse.statusText)
+            originalError.value = true
+          }
+        } catch (fetchError) {
+          console.error('Error fetching original image:', fetchError)
+          originalError.value = true
+        }
+      } else {
+        originalUrl.value = response.data.original_url
+        console.log('Original URL set to:', originalUrl.value)
+      }
+    } else {
+      console.log('No original_url in response')
     }
   } catch (error) {
     console.error('Failed to load image:', error)
@@ -157,6 +190,7 @@ const onOriginalLoad = () => {
   if (originalImg.value) {
     const img = originalImg.value
     originalDimensions.value = `${img.naturalWidth} × ${img.naturalHeight} pixels`
+    console.log('Original image loaded:', originalDimensions.value)
   }
 }
 
@@ -164,7 +198,14 @@ const onProcessedLoad = () => {
   if (processedImg.value) {
     const img = processedImg.value
     processedDimensions.value = `${img.naturalWidth} × ${img.naturalHeight} pixels`
+    console.log('Processed image loaded:', processedDimensions.value)
   }
+}
+
+const onOriginalError = (event) => {
+  originalError.value = true
+  console.error('Original image failed to load:', event)
+  console.error('Failed URL was:', originalUrl.value)
 }
 
 const formatBytes = (bytes) => {
@@ -213,8 +254,20 @@ const formatProcessingOptions = (options) => {
   }
 }
 
+// Cleanup blob URLs to prevent memory leaks
+const cleanup = () => {
+  blobUrls.value.forEach(url => {
+    URL.revokeObjectURL(url)
+  })
+  blobUrls.value = []
+}
+
 onMounted(loadImage)
-watch(() => props.imageId, loadImage)
+onUnmounted(cleanup)
+watch(() => props.imageId, () => {
+  cleanup() // Clean up previous blob URLs
+  loadImage()
+})
 </script>
 
 <style scoped>
