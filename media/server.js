@@ -149,6 +149,38 @@ app.get('/originals/*', { preHandler: verifyHmac }, async (request, reply) => {
   }
 });
 
+// Delete original with signature
+app.delete('/originals/*', { preHandler: verifyHmac }, async (request, reply) => {
+  const filepath = request.params['*'];
+  const fullPath = path.join(config.mediaRoot, 'originals', filepath);
+  
+  try {
+    await fs.unlink(fullPath);
+    return { success: true, message: `Deleted originals/${filepath}` };
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return reply.notFound({ error: `File not found: originals/${filepath}` });
+    }
+    throw err;
+  }
+});
+
+// Delete processed with signature
+app.delete('/processed/*', { preHandler: verifyHmac }, async (request, reply) => {
+  const filepath = request.params['*'];
+  const fullPath = path.join(config.mediaRoot, 'processed', filepath);
+  
+  try {
+    await fs.unlink(fullPath);
+    return { success: true, message: `Deleted processed/${filepath}` };
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return reply.notFound({ error: `File not found: processed/${filepath}` });
+    }
+    throw err;
+  }
+});
+
 // Start server
 try {
   await app.listen({ port: config.port, host: config.host });

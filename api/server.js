@@ -295,6 +295,75 @@ app.get('/images/:id', async (request) => {
   };
 });
 
+// Delete image - complete cleanup
+app.delete('/images/:id', async (request) => {
+  const imageId = request.params.id;
+  console.log(`DELETE request received for image ID: ${imageId}`);
+  
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Get image details for file cleanup
+    const imageResult = await client.query(
+      'SELECT original_path, processed_path, sha256 FROM images WHERE id = $1',
+      [imageId]
+    );
+    
+    if (imageResult.rows.length === 0) {
+      console.log(`Image ${imageId} not found in database`);
+      throw app.httpErrors.notFound('Image not found');
+    }
+    
+    const image = imageResult.rows[0];
+    console.log(`Deleting image ${imageId} with SHA256: ${image.sha256}`);
+    
+    // Delete all related jobs first (to maintain referential integrity)
+    const jobsDeleted = await client.query('DELETE FROM jobs WHERE image_id = $1', [imageId]);
+    console.log(`Deleted ${jobsDeleted.rowCount} jobs for image ${imageId}`);
+    
+    // Delete all events
+    const eventsDeleted = await client.query('DELETE FROM events WHERE image_id = $1', [imageId]);
+    console.log(`Deleted ${eventsDeleted.rowCount} events for image ${imageId}`);
+    
+    // Delete the image record (this will also cascade delete related records)
+    const imageDeleted = await client.query('DELETE FROM images WHERE id = $1', [imageId]);
+    console.log(`Deleted ${imageDeleted.rowCount} image records for image ${imageId}`);
+    
+    await client.query('COMMIT');
+    console.log(`Database transaction committed for image ${imageId}`);
+    
+    // Delete files from media service (don't let file deletion failure break the DB transaction)
+    const filesToDelete = [];
+    if (image.original_path) filesToDelete.push(image.original_path);
+    if (image.processed_path) filesToDelete.push(image.processed_path);
+    
+    // Delete files asynchronously - errors logged but not thrown
+    for (const filePath of filesToDelete) {
+      try {
+        const signed = await getSignedUrl('DELETE', `/${filePath}`);
+        const deleteResponse = await fetch(`${config.mediaServiceUrl}${signed.url}`, {
+          method: 'DELETE',
+          headers: signed.headers
+        });
+        if (!deleteResponse.ok) {
+          console.warn(`Failed to delete file ${filePath}: ${deleteResponse.statusText}`);
+        }
+      } catch (err) {
+        console.warn(`Error deleting file ${filePath}:`, err.message);
+      }
+    }
+    
+    return { success: true, message: 'Image and all related data deleted successfully' };
+    
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
 // Get job status
 app.get('/jobs/:id', async (request) => {
   const jobId = request.params.id;

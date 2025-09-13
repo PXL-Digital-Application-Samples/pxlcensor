@@ -288,12 +288,12 @@ const upload = async () => {
     console.log('Processing triggered successfully:', processResponse.data)
     
     // Step 5: Complete - SUCCESSFUL UPLOAD!
-    setStatus('success', 'Succeeded!', 100)
+    setStatus('success', 'Success', 100)
     
-    // Show success for 3 seconds, then reset
+    // Show success for 1 second, then reset
     setTimeout(() => {
       reset()
-    }, 3000)
+    }, 1000)
     
   } catch (err) {
     console.error('Upload failed:', err)

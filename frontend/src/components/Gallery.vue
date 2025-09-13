@@ -39,6 +39,15 @@
             <span v-else-if="image.status === 'failed'">❌ Failed</span>
             <span v-else>📸 Uploaded</span>
           </div>
+          
+          <!-- DELETE BUTTON -->
+          <button 
+            class="delete-btn" 
+            @click.stop="deleteImage(image.id)"
+            title="Delete this image"
+          >
+            ✕
+          </button>
         </div>
         <div class="image-info">
           <span class="status-badge" :class="`status-${image.status}`">
@@ -118,6 +127,21 @@ const formatDate = (dateString) => {
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
 }
 
+const deleteImage = async (imageId) => {
+  if (!confirm('Are you sure you want to delete this image? This will remove all files and cannot be undone.')) {
+    return
+  }
+  
+  try {
+    await axios.delete(`/api/images/${imageId}`)
+    // Remove from local array immediately for better UX
+    images.value = images.value.filter(img => img.id !== imageId)
+  } catch (err) {
+    console.error('Failed to delete image:', err)
+    alert('Failed to delete image. Please try again.')
+  }
+}
+
 onMounted(() => {
   loadImages()
   // Auto-refresh every 5 seconds
@@ -187,6 +211,32 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #e74c3c;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.delete-btn:hover {
+  background: #e74c3c;
+  color: white;
+  transform: scale(1.1);
 }
 
 .placeholder {

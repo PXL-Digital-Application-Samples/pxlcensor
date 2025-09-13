@@ -12,30 +12,45 @@
         <div class="image-comparison">
           <div class="image-panel">
             <h3>Original</h3>
-            <img 
-              v-if="originalUrl" 
-              :src="originalUrl"
-              alt="Original"
-              @error="originalError = true"
-            />
-            <div v-else class="placeholder">
-              <span v-if="originalError">Failed to load</span>
-              <span v-else>Loading original...</span>
+            <div class="image-container">
+              <img 
+                v-if="originalUrl && !originalError" 
+                :src="originalUrl"
+                alt="Original"
+                @error="originalError = true"
+                @load="onOriginalLoad"
+                ref="originalImg"
+              />
+              <div v-else class="placeholder">
+                <span v-if="originalError">❌ Failed to load original</span>
+                <span v-else-if="!originalUrl">📁 Original not available</span>
+                <span v-else>📸 Loading original...</span>
+              </div>
+            </div>
+            <div v-if="originalDimensions" class="image-info">
+              {{ originalDimensions }}
             </div>
           </div>
           
           <div class="image-panel">
             <h3>Processed</h3>
-            <img 
-              v-if="image.processed_url" 
-              :src="image.processed_url"
-              alt="Processed"
-            />
-            <div v-else class="placeholder">
-              <span v-if="image.status === 'processing'">🔄 Processing...</span>
-              <span v-else-if="image.status === 'queued'">⏳ In Queue</span>
-              <span v-else-if="image.status === 'failed'">❌ Processing Failed</span>
-              <span v-else>Not processed yet</span>
+            <div class="image-container">
+              <img 
+                v-if="image.processed_url" 
+                :src="image.processed_url"
+                alt="Processed"
+                @load="onProcessedLoad"
+                ref="processedImg"
+              />
+              <div v-else class="placeholder">
+                <span v-if="image.status === 'processing'">🔄 Processing...</span>
+                <span v-else-if="image.status === 'queued'">⏳ In Queue</span>
+                <span v-else-if="image.status === 'failed'">❌ Processing Failed</span>
+                <span v-else>⏳ Not processed yet</span>
+              </div>
+            </div>
+            <div v-if="processedDimensions" class="image-info">
+              {{ processedDimensions }}
             </div>
           </div>
         </div>
@@ -50,12 +65,28 @@
               </span>
             </div>
             <div class="detail-item">
-              <span class="label">Type:</span>
+              <span class="label">File Type:</span>
               <span>{{ image.mime }}</span>
             </div>
             <div class="detail-item">
-              <span class="label">Size:</span>
+              <span class="label">File Size:</span>
               <span>{{ formatBytes(image.bytes) }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">SHA256:</span>
+              <span class="hash">{{ image.sha256 ? image.sha256.substring(0, 16) + '...' : 'N/A' }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Original Path:</span>
+              <span class="path">{{ image.original_path || 'N/A' }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Processed Path:</span>
+              <span class="path">{{ image.processed_path || 'Not processed' }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Processing Options:</span>
+              <span>{{ formatProcessingOptions(image.processing_options) }}</span>
             </div>
             <div class="detail-item">
               <span class="label">Uploaded:</span>
@@ -95,12 +126,20 @@ const image = ref(null)
 const loading = ref(true)
 const originalUrl = ref('')
 const originalError = ref(false)
+const originalDimensions = ref('')
+const processedDimensions = ref('')
+const originalImg = ref(null)
+const processedImg = ref(null)
 
 const loadImage = async () => {
   if (!props.imageId) return
   
   try {
     loading.value = true
+    originalError.value = false
+    originalDimensions.value = ''
+    processedDimensions.value = ''
+    
     const response = await axios.get(`/api/images/${props.imageId}`)
     image.value = response.data
     
@@ -111,6 +150,20 @@ const loadImage = async () => {
     console.error('Failed to load image:', error)
   } finally {
     loading.value = false
+  }
+}
+
+const onOriginalLoad = () => {
+  if (originalImg.value) {
+    const img = originalImg.value
+    originalDimensions.value = `${img.naturalWidth} × ${img.naturalHeight} pixels`
+  }
+}
+
+const onProcessedLoad = () => {
+  if (processedImg.value) {
+    const img = processedImg.value
+    processedDimensions.value = `${img.naturalWidth} × ${img.naturalHeight} pixels`
   }
 }
 
@@ -135,6 +188,31 @@ const formatEventType = (type) => {
   return types[type] || type
 }
 
+const formatProcessingOptions = (options) => {
+  if (!options) return 'Default settings'
+  
+  try {
+    const opts = typeof options === 'string' ? JSON.parse(options) : options
+    const parts = []
+    
+    if (opts.method) {
+      parts.push(`Method: ${opts.method}`)
+    }
+    
+    if (opts.method === 'mosaic' && opts.mosaic_size) {
+      parts.push(`Size: ${opts.mosaic_size}px`)
+    }
+    
+    if (opts.scale_720p) {
+      parts.push('720p scaling')
+    }
+    
+    return parts.length > 0 ? parts.join(', ') : 'Default settings'
+  } catch (e) {
+    return 'Invalid options'
+  }
+}
+
 onMounted(loadImage)
 watch(() => props.imageId, loadImage)
 </script>
@@ -155,11 +233,13 @@ watch(() => props.imageId, loadImage)
 
 .modal {
   background: white;
-  border-radius: 8px;
-  max-width: 90vw;
-  max-height: 90vh;
-  overflow-y: auto;
-  margin: 20px;
+  border-radius: 12px;
+  width: 95vw;
+  max-width: 1200px;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
 }
 
 .modal-header {
@@ -168,6 +248,7 @@ watch(() => props.imageId, loadImage)
   align-items: center;
   padding: 20px;
   border-bottom: 1px solid #eee;
+  flex-shrink: 0;
 }
 
 .close-btn {
@@ -176,10 +257,19 @@ watch(() => props.imageId, loadImage)
   font-size: 24px;
   cursor: pointer;
   color: #666;
+  padding: 5px;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: #f0f0f0;
 }
 
 .modal-content {
   padding: 20px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .image-comparison {
@@ -192,13 +282,32 @@ watch(() => props.imageId, loadImage)
 .image-panel h3 {
   margin-bottom: 10px;
   text-align: center;
+  color: #333;
+  font-size: 18px;
+}
+
+.image-container {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  background: #f8f9fa;
 }
 
 .image-panel img {
   width: 100%;
   height: auto;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  max-height: 400px;
+  object-fit: contain;
+  display: block;
+}
+
+.image-info {
+  text-align: center;
+  margin-top: 8px;
+  font-size: 14px;
+  color: #666;
+  font-weight: 500;
 }
 
 .placeholder {
@@ -208,26 +317,50 @@ watch(() => props.imageId, loadImage)
   align-items: center;
   justify-content: center;
   background: #f5f5f5;
-  border-radius: 4px;
+  border-radius: 8px;
   color: #666;
+  font-size: 16px;
+}
+
+.details h3 {
+  margin-bottom: 20px;
+  color: #333;
+  font-size: 20px;
+  border-bottom: 2px solid #e9ecef;
+  padding-bottom: 10px;
 }
 
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 15px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
 }
 
 .detail-item {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border-left: 4px solid #007bff;
 }
 
 .label {
   font-weight: 600;
-  color: #666;
+  color: #495057;
   font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hash, .path {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  background: #e9ecef;
+  padding: 4px 8px;
+  border-radius: 4px;
+  word-break: break-all;
 }
 
 .status-badge {
@@ -287,10 +420,45 @@ watch(() => props.imageId, loadImage)
 @media (max-width: 768px) {
   .image-comparison {
     grid-template-columns: 1fr;
+    gap: 15px;
   }
   
   .modal {
-    margin: 10px;
+    width: 98vw;
+    height: 95vh;
+    margin: 0;
+    border-radius: 8px;
+  }
+  
+  .modal-content {
+    padding: 15px;
+  }
+  
+  .detail-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  
+  .detail-item {
+    padding: 12px;
+  }
+  
+  .image-panel img {
+    max-height: 250px;
+  }
+}
+
+@media (max-width: 480px) {
+  .modal-header {
+    padding: 15px;
+  }
+  
+  .modal-header h2 {
+    font-size: 18px;
+  }
+  
+  .close-btn {
+    font-size: 20px;
   }
 }
 </style>
