@@ -30,6 +30,43 @@
       </div>
     </div>
 
+    <div v-if="file" class="processing-options">
+      <h3>Processing Options</h3>
+      
+      <div class="option-group">
+        <label for="method">Anonymization Method:</label>
+        <select id="method" v-model="processingOptions.method">
+          <option value="mosaic">Mosaic (Default)</option>
+          <option value="blur">Blur</option>
+          <option value="solid">Solid Black Box</option>
+        </select>
+      </div>
+
+      <div v-if="processingOptions.method === 'mosaic'" class="option-group">
+        <label for="mosaicSize">Mosaic Size:</label>
+        <input 
+          type="range" 
+          id="mosaicSize" 
+          v-model.number="processingOptions.mosaic_size" 
+          min="5" 
+          max="120" 
+          step="5"
+        />
+        <span>{{ processingOptions.mosaic_size }}px</span>
+        <small class="hint">Auto-calculated based on image size</small>
+      </div>
+
+      <div class="option-group">
+        <label>
+          <input 
+            type="checkbox" 
+            v-model="processingOptions.scale_720p"
+          />
+          Scale to 720p (reduces file size, faster processing)
+        </label>
+      </div>
+    </div>
+
     <div v-if="file" class="actions">
       <button class="btn btn-secondary" @click="reset">Change Image</button>
       <button class="btn" @click="upload" :disabled="uploading">
@@ -63,6 +100,52 @@ const progressText = ref('')
 const error = ref(null)
 const fileInput = ref(null)
 
+// Processing options with defaults
+const processingOptions = ref({
+  method: 'mosaic',
+  mosaic_size: 20,
+  scale_720p: false
+})
+
+// Calculate smart mosaic size based on image dimensions and file size
+const calculateSmartMosaicSize = async (file) => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      // Calculate actual megapixels from image dimensions
+      const megapixels = (img.width * img.height) / (1024 * 1024)
+      
+      let mosaicSize
+      if (megapixels < 1) {
+        mosaicSize = 15  // Small images (<1MP) - 15px
+      } else if (megapixels < 4) {
+        mosaicSize = 25  // Medium images (1-4MP) - 25px  
+      } else if (megapixels < 8) {
+        mosaicSize = 40  // Large images (4-8MP) - 40px
+      } else if (megapixels < 16) {
+        mosaicSize = 60  // Very large images (8-16MP) - 60px
+      } else if (megapixels < 32) {
+        mosaicSize = 80  // Ultra high-res images (16-32MP) - 80px
+      } else {
+        mosaicSize = 100 // Extremely high-res images (>32MP) - 100px
+      }
+      
+      resolve(mosaicSize)
+    }
+    img.onerror = () => {
+      // Fallback to file size estimation if image loading fails
+      const estimatedMegapixels = file.size / (300 * 1024)
+      if (estimatedMegapixels < 1) resolve(15)
+      else if (estimatedMegapixels < 4) resolve(25) 
+      else if (estimatedMegapixels < 8) resolve(40)
+      else if (estimatedMegapixels < 16) resolve(60)
+      else if (estimatedMegapixels < 32) resolve(80)
+      else resolve(100)
+    }
+    img.src = URL.createObjectURL(file)
+  })
+}
+
 const handleDrop = (e) => {
   e.preventDefault()
   isDragging.value = false
@@ -80,7 +163,7 @@ const handleFileSelect = (e) => {
   }
 }
 
-const selectFile = (selectedFile) => {
+const selectFile = async (selectedFile) => {
   // Validate file type
   const validTypes = ['image/jpeg', 'image/png', 'image/webp']
   if (!validTypes.includes(selectedFile.type)) {
@@ -96,6 +179,10 @@ const selectFile = (selectedFile) => {
 
   error.value = null
   file.value = selectedFile
+  
+  // Calculate smart mosaic size based on actual image dimensions
+  const smartMosaicSize = await calculateSmartMosaicSize(selectedFile)
+  processingOptions.value.mosaic_size = smartMosaicSize
   
   // Create preview
   const reader = new FileReader()
@@ -132,14 +219,27 @@ const upload = async () => {
       filename: file.value.name,
       mime: file.value.type,
       bytes: file.value.size,
-      sha256: sha256
+      sha256: sha256,
+      processing_options: processingOptions.value
     })
     
-    const { image_id, upload_url, upload_headers, duplicate } = initResponse.data
+    const { image_id, upload_url, upload_headers, duplicate, status, processed_path } = initResponse.data
     
     if (duplicate) {
-      progressText.value = 'Image already exists, processing...'
-      progress.value = 50
+      if (status === 'complete' && processed_path) {
+        // Image already processed, show success
+        progressText.value = 'Image already processed!'
+        progress.value = 100
+        setTimeout(() => {
+          emit('uploaded')
+          reset()
+        }, 2000)
+        return
+      } else {
+        // Image exists but not yet processed
+        progressText.value = 'Image already exists, processing...'
+        progress.value = 50
+      }
     } else {
       // Step 3: Upload file
       progressText.value = 'Uploading image...'
@@ -162,7 +262,7 @@ const upload = async () => {
     progressText.value = 'Starting face anonymization...'
     progress.value = 80
     
-    await axios.post(`/api/images/${image_id}/process`, {
+    const processResponse = await axios.post(`/api/images/${image_id}/process`, {
       pipeline: 'deface_boxes'
     })
     
@@ -170,14 +270,31 @@ const upload = async () => {
     progress.value = 100
     progressText.value = 'Upload complete! Processing in background...'
     
+    // Just reset without redirecting
     setTimeout(() => {
-      emit('uploaded')
-      reset()
-    }, 2000)
+      uploading.value = false
+      progress.value = 0
+      progressText.value = ''
+      // Don't emit 'uploaded' to avoid automatic redirect
+      // User can manually go to gallery when they want
+    }, 3000)
     
   } catch (err) {
-    error.value = err.response?.data?.error || err.message || 'Upload failed'
+    // Reset progress and uploading state
     uploading.value = false
+    progress.value = 0
+    progressText.value = ''
+    
+    // Handle specific error cases
+    if (err.response?.status === 409) {
+      error.value = 'This image has already been processed. Try a different image or modify this one slightly to reprocess with new settings.'
+    } else if (err.response?.data?.message) {
+      error.value = err.response.data.message
+    } else if (err.response?.data?.error) {
+      error.value = err.response.data.error
+    } else {
+      error.value = err.message || 'Upload failed'
+    }
   }
 }
 
@@ -188,6 +305,14 @@ const reset = () => {
   progress.value = 0
   progressText.value = ''
   error.value = null
+  
+  // Reset processing options to defaults
+  processingOptions.value = {
+    method: 'mosaic',
+    mosaic_size: 20,
+    scale_720p: false
+  }
+  
   if (fileInput.value) {
     fileInput.value.value = ''
   }
@@ -248,6 +373,56 @@ const formatBytes = (bytes) => {
   text-align: left;
 }
 
+.processing-options {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.processing-options h3 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.option-group {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.option-group label {
+  font-weight: 500;
+  color: #555;
+  min-width: 140px;
+}
+
+.option-group select {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  min-width: 180px;
+}
+
+.option-group input[type="range"] {
+  flex: 1;
+  margin: 0 0.5rem;
+}
+
+.option-group input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.option-group span {
+  min-width: 50px;
+  font-weight: 500;
+  color: #333;
+}
+
 .actions {
   margin-top: 2rem;
   display: flex;
@@ -285,5 +460,13 @@ const formatBytes = (bytes) => {
   background: #ffebee;
   color: #c62828;
   border-radius: 4px;
+}
+
+.hint {
+  display: block;
+  color: #666;
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+  font-style: italic;
 }
 </style>

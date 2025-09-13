@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
+import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import { createHmac } from 'crypto';
 import { promises as fs } from 'fs';
@@ -27,6 +28,9 @@ const config = {
 };
 
 // Register plugins
+await app.register(cors, {
+  origin: true // Allow all origins for development
+});
 await app.register(sensible);
 
 // Add content type parser for binary uploads

@@ -90,18 +90,39 @@ async function runDeface(inputPath, outputPath, options = {}) {
     const args = [
       inputPath,
       '--boxes',
-      '--replacewith', 'solid',
       '-o', outputPath
     ];
     
-    // Add scale option for large images
-    if (options.scale) {
-      args.push('--scale', options.scale);
+    // Add method-specific options
+    if (options.method === 'mosaic') {
+      args.push('--replacewith', 'mosaic');
+      if (options.mosaic_size) {
+        args.push('--mosaicsize', options.mosaic_size.toString());
+      }
+    } else if (options.method === 'blur') {
+      args.push('--replacewith', 'blur');
+    } else if (options.method === 'solid') {
+      args.push('--replacewith', 'solid');
+    } else {
+      // Default to mosaic
+      args.push('--replacewith', 'mosaic');
+      if (options.mosaic_size) {
+        args.push('--mosaicsize', options.mosaic_size.toString());
+      }
     }
     
-    console.log(`Running: deface ${args.join(' ')}`);
+    // Add scale option for inference (reduces memory usage)
+    // Always add a reasonable scale to prevent memory issues with large images
+    if (options.scale) {
+      args.push('--scale', options.scale);
+    } else {
+      // Default scale for inference to prevent memory issues
+      args.push('--scale', '1280x720');
+    }
     
-    const deface = spawn('deface', args);
+    console.log(`Running: /opt/deface-env/bin/deface ${args.join(' ')}`);
+    
+    const deface = spawn('/opt/deface-env/bin/deface', args);
     
     let stderr = '';
     
@@ -109,8 +130,10 @@ async function runDeface(inputPath, outputPath, options = {}) {
       stderr += data.toString();
     });
     
-    deface.on('close', (code) => {
-      if (code !== 0) {
+    deface.on('close', (code, signal) => {
+      if (code === null && signal) {
+        reject(new Error(`deface was killed by signal ${signal}: ${stderr}`));
+      } else if (code !== 0) {
         reject(new Error(`deface failed with code ${code}: ${stderr}`));
       } else {
         resolve({ success: true, output: outputPath, stderr });
@@ -125,14 +148,12 @@ async function runDeface(inputPath, outputPath, options = {}) {
 
 // Process a single job
 async function processJob(job) {
-  console.log(`Processing job ${job.id} for image ${job.image_id}`);
-  
   const client = await pool.connect();
   
   try {
     // Get image details
     const imageResult = await client.query(
-      'SELECT original_path, mime, bytes FROM images WHERE id = $1',
+      'SELECT original_path, mime, bytes, processing_options FROM images WHERE id = $1',
       [job.image_id]
     );
     
@@ -153,15 +174,22 @@ async function processJob(job) {
     
     try {
       // Download original
-      console.log(`Downloading ${image.original_path}`);
       await downloadFile(image.original_path, tempInput);
       
-      // Run deface
-      console.log(`Running deface on ${tempInput}`);
-      const defaceOptions = {};
+      // Debug: Check if file was downloaded
+      const inputStats = await fs.stat(tempInput);
+      console.log(`Downloaded ${tempInput}, size: ${inputStats.size} bytes`);
       
-      // Scale down large images for better performance
-      if (image.bytes > 5 * 1024 * 1024) { // > 5MB
+      // Get processing options from job or image
+      const processingOptions = job.processing_options || image.processing_options || {};
+      const defaceOptions = {
+        method: processingOptions.method || 'mosaic',
+        scale_720p: processingOptions.scale_720p || false,
+        mosaic_size: processingOptions.mosaic_size || 20
+      };
+      
+      // Apply 720p scaling if requested
+      if (defaceOptions.scale_720p) {
         defaceOptions.scale = '1280x720';
       }
       
@@ -174,13 +202,10 @@ async function processJob(job) {
       }
       
       // Upload processed image
-      console.log(`Uploading to ${processedPath}`);
       await uploadFile(tempOutput, processedPath);
       
       // Mark job as complete
       await client.query('SELECT complete_job($1, $2)', [job.id, processedPath]);
-      
-      console.log(`Job ${job.id} completed successfully`);
       
     } finally {
       // Cleanup temp files

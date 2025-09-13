@@ -21,6 +21,7 @@ const config = {
   host: '0.0.0.0',
   databaseUrl: process.env.DATABASE_URL || 'postgresql://pxlcensor:devpassword@localhost:5432/pxlcensor',
   mediaServiceUrl: process.env.MEDIA_SERVICE_URL || 'http://localhost:8081',
+  mediaExternalUrl: process.env.MEDIA_EXTERNAL_URL || process.env.MEDIA_SERVICE_URL || 'http://localhost:8081',
   mediaSigningSecret: process.env.MEDIA_SIGNING_SECRET || 'dev-secret-change-in-production',
   maxUploadBytes: parseInt(process.env.MAX_UPLOAD_MB || '25') * 1024 * 1024
 };
@@ -83,7 +84,7 @@ app.get('/health', async () => {
 
 // Initialize upload
 app.post('/upload-init', async (request) => {
-  const { filename, mime, bytes, sha256 } = request.body;
+  const { filename, mime, bytes, sha256, processing_options } = request.body;
   
   // Validate input
   const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
@@ -93,6 +94,23 @@ app.post('/upload-init', async (request) => {
   
   if (bytes > config.maxUploadBytes) {
     throw app.httpErrors.badRequest(`File too large. Max size: ${config.maxUploadBytes} bytes`);
+  }
+
+  // Validate processing options
+  const defaultOptions = { method: 'mosaic', scale_720p: false, mosaic_size: 20 };
+  const options = { ...defaultOptions, ...processing_options };
+  
+  const allowedMethods = ['blur', 'solid', 'none', 'mosaic'];
+  if (!allowedMethods.includes(options.method)) {
+    throw app.httpErrors.badRequest('Invalid processing method');
+  }
+  
+  if (typeof options.scale_720p !== 'boolean') {
+    throw app.httpErrors.badRequest('scale_720p must be boolean');
+  }
+  
+  if (!Number.isInteger(options.mosaic_size) || options.mosaic_size < 1 || options.mosaic_size > 120) {
+    throw app.httpErrors.badRequest('mosaic_size must be integer between 1-120');
   }
   
   // Check for duplicate
@@ -116,10 +134,10 @@ app.post('/upload-init', async (request) => {
   
   // Create image record
   const result = await pool.query(
-    `INSERT INTO images (original_path, sha256, mime, bytes, status)
-     VALUES ($1, $2, $3, $4, 'uploaded')
+    `INSERT INTO images (original_path, sha256, mime, bytes, status, processing_options)
+     VALUES ($1, $2, $3, $4, 'uploaded', $5)
      RETURNING id`,
-    [originalPath, sha256, mime, bytes]
+    [originalPath, sha256, mime, bytes, JSON.stringify(options)]
   );
   
   const imageId = result.rows[0].id;
@@ -135,7 +153,7 @@ app.post('/upload-init', async (request) => {
   
   return {
     image_id: imageId,
-    upload_url: `${config.mediaServiceUrl}${signed.url}`,
+    upload_url: `${config.mediaExternalUrl}${signed.url}`,
     upload_headers: signed.headers,
     original_path: originalPath
   };
@@ -148,7 +166,7 @@ app.post('/images/:id/process', async (request) => {
   
   // Verify image exists and is uploaded
   const imageResult = await pool.query(
-    'SELECT status, sha256 FROM images WHERE id = $1',
+    'SELECT status, sha256, processing_options FROM images WHERE id = $1',
     [imageId]
   );
   
@@ -181,10 +199,10 @@ app.post('/images/:id/process', async (request) => {
   
   // Create job
   const jobResult = await pool.query(
-    `INSERT INTO jobs (image_id, kind, status, dedupe_key)
-     VALUES ($1, $2, 'queued', $3)
+    `INSERT INTO jobs (image_id, kind, status, dedupe_key, processing_options)
+     VALUES ($1, $2, 'queued', $3, $4)
      RETURNING id`,
-    [imageId, pipeline, dedupeKey]
+    [imageId, pipeline, dedupeKey, JSON.stringify(image.processing_options)]
   );
   
   const jobId = jobResult.rows[0].id;
@@ -231,7 +249,7 @@ app.get('/images', async (request) => {
   const images = result.rows.map(img => ({
     ...img,
     processed_url: img.processed_path ? 
-      `${config.mediaServiceUrl}/processed/${img.processed_path.replace('processed/', '')}` : null
+      `${config.mediaExternalUrl}/${img.processed_path}` : null
   }));
   
   return { images, page, pageSize };
@@ -263,7 +281,7 @@ app.get('/images/:id', async (request) => {
   let originalHeaders = null;
   if (image.original_path) {
     const signed = await getSignedUrl('GET', `/${image.original_path}`, 60);
-    originalUrl = `${config.mediaServiceUrl}${signed.url}`;
+    originalUrl = `${config.mediaExternalUrl}${signed.url}`;
     originalHeaders = signed.headers;
   }
 
@@ -272,7 +290,7 @@ app.get('/images/:id', async (request) => {
     original_url: originalUrl,
     original_headers: originalHeaders,
     processed_url: image.processed_path ? 
-      `${config.mediaServiceUrl}/processed/${image.processed_path.replace('processed/', '')}` : null,
+      `${config.mediaExternalUrl}/${image.processed_path}` : null,
     events: events.rows
   };
 });

@@ -9,24 +9,44 @@ RETURNS TABLE (
   kind TEXT,
   attempts INTEGER
 ) AS $$
+DECLARE
+  claimed_job_ids BIGINT[];
 BEGIN
-  RETURN QUERY
-  UPDATE jobs
-  SET 
-    status = 'processing',
-    claimed_by = worker_id,
-    claimed_at = NOW(),
-    attempts = jobs.attempts + 1
-  WHERE jobs.id IN (
-    SELECT jobs.id
-    FROM jobs
-    WHERE jobs.status = 'queued'
-      AND jobs.run_at <= NOW()
-    ORDER BY jobs.run_at
-    FOR UPDATE SKIP LOCKED
-    LIMIT batch_size
+  -- Claim jobs and get their IDs
+  WITH claimed AS (
+    UPDATE jobs
+    SET 
+      status = 'processing',
+      claimed_by = worker_id,
+      claimed_at = NOW(),
+      attempts = jobs.attempts + 1
+    WHERE jobs.id IN (
+      SELECT jobs.id
+      FROM jobs
+      WHERE jobs.status = 'queued'
+        AND jobs.run_at <= NOW()
+      ORDER BY jobs.run_at
+      FOR UPDATE SKIP LOCKED
+      LIMIT batch_size
+    )
+    RETURNING jobs.id, jobs.image_id, jobs.kind, jobs.attempts
   )
-  RETURNING jobs.id, jobs.image_id, jobs.kind, jobs.attempts;
+  SELECT array_agg(c.id) INTO claimed_job_ids FROM claimed c;
+
+  -- Update corresponding images to processing status
+  UPDATE images 
+  SET status = 'processing'
+  WHERE images.id IN (
+    SELECT DISTINCT j.image_id 
+    FROM jobs j
+    WHERE j.id = ANY(claimed_job_ids)
+  );
+
+  -- Return the claimed jobs
+  RETURN QUERY
+  SELECT j.id, j.image_id, j.kind, j.attempts
+  FROM jobs j
+  WHERE j.id = ANY(claimed_job_ids);
 END;
 $$ LANGUAGE plpgsql;
 
