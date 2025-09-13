@@ -14,7 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL || 'info'
-  }
+  },
+  bodyLimit: 26 * 1024 * 1024 // 26MB to handle 25MB files plus overhead
 });
 
 // Config
@@ -27,6 +28,12 @@ const config = {
 
 // Register plugins
 await app.register(sensible);
+
+// Add content type parser for binary uploads
+app.addContentTypeParser(['image/jpeg', 'image/png', 'image/webp', 'application/octet-stream'], 
+  { parseAs: 'buffer' }, 
+  async (req, body) => body
+);
 
 // Serve static files from processed directory
 await app.register(fastifyStatic, {

@@ -33,7 +33,7 @@ $$ LANGUAGE plpgsql;
 -- Function to complete a job
 CREATE OR REPLACE FUNCTION complete_job(
   job_id BIGINT,
-  processed_path TEXT DEFAULT NULL
+  p_processed_path TEXT DEFAULT NULL
 )
 RETURNS BOOLEAN AS $$
 DECLARE
@@ -50,11 +50,11 @@ BEGIN
   END IF;
   
   -- Update image if processed path provided
-  IF processed_path IS NOT NULL THEN
+  IF p_processed_path IS NOT NULL THEN
     UPDATE images
     SET 
       status = 'done',
-      processed_path = processed_path
+      processed_path = p_processed_path
     WHERE id = v_image_id;
   END IF;
   
@@ -63,7 +63,7 @@ BEGIN
   VALUES (
     v_image_id, 
     'job_completed',
-    jsonb_build_object('job_id', job_id, 'processed_path', processed_path)
+    jsonb_build_object('job_id', job_id, 'processed_path', p_processed_path)
   );
   
   RETURN TRUE;
