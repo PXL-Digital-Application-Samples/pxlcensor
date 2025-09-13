@@ -67,16 +67,6 @@
         <span>{{ processingOptions.mosaic_size }}px</span>
         <small class="hint">Auto-calculated based on image size</small>
       </div>
-
-      <div class="option-group">
-        <label>
-          <input 
-            type="checkbox" 
-            v-model="processingOptions.scale_720p"
-          />
-          Scale to 720p (reduces file size, faster processing)
-        </label>
-      </div>
     </div>
 
     <div v-if="file" class="actions">
@@ -108,8 +98,7 @@ const fileInput = ref(null)
 // Processing options with defaults - BULLETPROOF INITIALIZATION
 const processingOptions = ref({
   method: 'mosaic',
-  mosaic_size: 20,
-  scale_720p: false
+  mosaic_size: 20
 })
 
 // Ensure processingOptions is always properly initialized
@@ -117,8 +106,7 @@ const ensureProcessingOptions = () => {
   if (!processingOptions.value || typeof processingOptions.value !== 'object') {
     processingOptions.value = {
       method: 'mosaic',
-      mosaic_size: 20,
-      scale_720p: false
+      mosaic_size: 20
     }
   }
 }
@@ -355,8 +343,7 @@ const reset = () => {
   // Reset processing options to defaults
   processingOptions.value = {
     method: 'mosaic',
-    mosaic_size: 20,
-    scale_720p: false
+    mosaic_size: 20
   }
   
   if (fileInput.value) {

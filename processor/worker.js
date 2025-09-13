@@ -42,6 +42,23 @@ async function getSignedUrl(method, path, expiresIn = 300) {
   return response.json();
 }
 
+// Calculate optimal scale for inference based on file size
+// Large files likely mean high resolution, so we scale down for better performance
+function getOptimalScale(fileSizeBytes) {
+  // For very large files (>10MB), use 720p inference
+  if (fileSizeBytes > 10 * 1024 * 1024) {
+    return '1280x720';
+  }
+  // For medium files (2-10MB), use 900p inference  
+  else if (fileSizeBytes > 2 * 1024 * 1024) {
+    return '1600x900';
+  }
+  // For smaller files, use 1080p inference
+  else {
+    return '1920x1080';
+  }
+}
+
 // Download file from media service
 async function downloadFile(path, outputFile) {
   const signed = await getSignedUrl('GET', `/${path}`);
@@ -86,6 +103,10 @@ async function uploadFile(localPath, remotePath) {
 
 // Run deface command
 async function runDeface(inputPath, outputPath, options = {}) {
+  // Get file size for optimal scaling
+  const fileStats = await fs.stat(inputPath);
+  const scale = getOptimalScale(fileStats.size);
+  
   return new Promise((resolve, reject) => {
     const args = [
       inputPath,
@@ -110,15 +131,10 @@ async function runDeface(inputPath, outputPath, options = {}) {
       }
     }
     
-    // Add scale option for inference (reduces memory usage)
-    // Always add a reasonable scale to prevent memory issues with large images
-    if (options.scale) {
-      args.push('--scale', options.scale);
-    } else {
-      // Default scale for inference to prevent memory issues
-      args.push('--scale', '1280x720');
-    }
+    // Add scale option for inference (reduces memory usage and improves performance)
+    args.push('--scale', scale);
     
+    console.log(`Using inference scale: ${scale} (based on file size: ${(fileStats.size / 1024 / 1024).toFixed(1)}MB)`);
     console.log(`Running: /opt/deface-env/bin/deface ${args.join(' ')}`);
     
     const deface = spawn('/opt/deface-env/bin/deface', args);
@@ -185,16 +201,10 @@ async function processJob(job) {
       
       const defaceOptions = {
         method: processingOptions.method || 'mosaic',
-        scale_720p: processingOptions.scale_720p || false,
         mosaic_size: processingOptions.mosaic_size || 20
       };
       
       console.log('Deface options:', JSON.stringify(defaceOptions));
-      
-      // Apply 720p scaling if requested
-      if (defaceOptions.scale_720p) {
-        defaceOptions.scale = '1280x720';
-      }
       
       await runDeface(tempInput, tempOutput, defaceOptions);
       

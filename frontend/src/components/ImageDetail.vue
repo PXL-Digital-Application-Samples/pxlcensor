@@ -244,10 +244,6 @@ const formatProcessingOptions = (options) => {
       parts.push(`Size: ${opts.mosaic_size}px`)
     }
     
-    if (opts.scale_720p) {
-      parts.push('720p scaling')
-    }
-    
     return parts.length > 0 ? parts.join(', ') : 'Default settings'
   } catch (e) {
     return 'Invalid options'

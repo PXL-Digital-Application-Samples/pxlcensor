@@ -97,16 +97,12 @@ app.post('/upload-init', async (request) => {
   }
 
   // Validate processing options
-  const defaultOptions = { method: 'mosaic', scale_720p: false, mosaic_size: 20 };
+  const defaultOptions = { method: 'mosaic', mosaic_size: 20 };
   const options = { ...defaultOptions, ...processing_options };
   
   const allowedMethods = ['blur', 'solid', 'none', 'mosaic'];
   if (!allowedMethods.includes(options.method)) {
     throw app.httpErrors.badRequest('Invalid processing method');
-  }
-  
-  if (typeof options.scale_720p !== 'boolean') {
-    throw app.httpErrors.badRequest('scale_720p must be boolean');
   }
   
   if (!Number.isInteger(options.mosaic_size) || options.mosaic_size < 1 || options.mosaic_size > 120) {
