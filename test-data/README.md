@@ -1,1 +1,1 @@
-open-source pictures
+Creative Commons pictures
