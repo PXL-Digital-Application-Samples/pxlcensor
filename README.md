@@ -18,6 +18,10 @@ PXLCensor provides an easy-to-use interface for anonymizing faces in photos. Upl
 - Complete file management including deletion
 - Docker-based deployment
 
+## Fugly - to fix
+
+- The polling/refresh in the Gallery view every 5s :)
+
 <img src="assets/gallery.png" alt="Gallery View" width="600">
 
 ## How It Works
