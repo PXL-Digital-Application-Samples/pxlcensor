@@ -20,7 +20,7 @@ PXLCensor provides an easy-to-use interface for anonymizing faces in photos. Upl
 
 ## Fugly - to fix
 
-- The polling/refresh in the Gallery view every 5s  :^)
+- The polling/complete screen refresh in the Gallery view every 5s  :^)
 
 <img src="assets/gallery.png" alt="Gallery View" width="600">
 
