@@ -51,7 +51,7 @@ The application consists of five services:
 
 ## Services
 
-**Frontend Service**: Vue 3 single-page application with Vite build system. Provides drag-and-drop upload interface, real-time processing status, image gallery with pagination, and detailed image view modal. Served as static files by the API service in production.
+**Frontend Service**: Vue 3 single-page application with Vite build system. Provides drag-and-drop upload interface, real-time processing status, image gallery with pagination, and detailed image view modal.
 
 **API Service**: Node.js/Fastify REST API that orchestrates the entire application. Handles file upload initialization, job queue management, database operations, and serves the frontend. Uses PostgreSQL LISTEN/NOTIFY for real-time job notifications and HMAC signatures for secure media operations.
 
