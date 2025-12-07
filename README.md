@@ -152,6 +152,3 @@ Logs can be viewed with `docker-compose logs <service-name>`.
 - Face detection accuracy varies with image quality and lighting
 - Very high resolution images may require additional memory
 
-## License
-
-This project is licensed under the MIT License.
